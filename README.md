@@ -37,5 +37,5 @@ EmbeddedTools
 
 ### 整体架构
 
-应用基于 electron 构建
-前端基于 Vue 3 + Element Plus 构建
+- 应用基于 electron 构建
+- 前端基于 Vue 3 + Element Plus 构建
