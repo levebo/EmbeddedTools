@@ -1,0 +1,50 @@
+{
+  "name": "embedded-tools",
+  "version": "3.1.0",
+  "productName": "嵌入式工具",
+  "description": "嵌入式工具, 用于处理点阵文字图片、图片转数组、数组转二进制文件、串口调试等功能。用于提升嵌入式系统开发的效率",
+  "license": "ISC",
+  "author": "HRS",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "electron-forge start",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "^7.8.1",
+    "@electron-forge/maker-deb": "^7.8.1",
+    "@electron-forge/maker-rpm": "^7.8.1",
+    "@electron-forge/maker-squirrel": "^7.8.1",
+    "@electron-forge/maker-zip": "^7.8.1",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.8.1",
+    "@electron-forge/plugin-fuses": "^7.8.1",
+    "@electron/fuses": "^1.8.0",
+    "@types/codemirror": "^5.60.16",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "electron": "^37.2.1",
+    "typescript": "^5.9.3",
+    "unplugin-auto-import": "^19.3.0",
+    "unplugin-icons": "^22.1.0",
+    "unplugin-vue-components": "^28.8.0",
+    "vite": "^7.0.0",
+    "vite-plugin-vue-devtools": "^7.7.7"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@types/node": "^24.0.13",
+    "@types/path-browserify": "^1.0.3",
+    "codemirror": "^5.65.20",
+    "codemirror-editor-vue3": "^2.8.0",
+    "electron-squirrel-startup": "^1.0.1",
+    "element-plus": "^2.11.3",
+    "jimp": "^1.6.0",
+    "path-browserify": "^1.0.1",
+    "pinyin": "^4.0.0",
+    "sharp": "^0.34.3",
+    "vue": "^3.5.17"
+  }
+}
