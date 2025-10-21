@@ -12,6 +12,8 @@
 - [界面展示](#界面展示)
 
 ### 使用指南
+Windows平台如果想直接使用可以跳转到[发行版本](https://github.com/levebo/EmbeddedTools/releases/latest)自行下载
+其他平台可以自行编译源码构建
 
 ### 文件目录说明
 eg:
@@ -50,4 +52,6 @@ EmbeddedTools
 <img width="1186" height="853" alt="image" src="https://github.com/user-attachments/assets/0402337b-9ec4-4742-9a13-c10d30e2fe70" />
 <img width="1186" height="853" alt="image" src="https://github.com/user-attachments/assets/ca4a5ed8-813a-4bea-adce-dc9a994f516c" />
 
+## 写在后面
 
+本工具一开始是为了方便内部项目开发而创建的，后来功能逐渐多了以后就共享出来希望能对你有所帮助。代码大部分是以实现功能为主没有什么太多参考价值。
