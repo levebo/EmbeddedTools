@@ -52,9 +52,9 @@ module.exports = {
         // 在打包前先执行 Vite 构建
         generateAssets: async () => {
             // 打包编译前端
-            // execSync('npm run build');
+            execSync('npm run build');
             // 运行开发调试前端
-            exec('npm run dev');
+            // exec('npm run dev');
         }
     }
 };

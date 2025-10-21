@@ -68,9 +68,9 @@ const createWindow = () => {
     })
 
     win.menuBarVisible = false;
-    // win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
-    win.loadURL('http://localhost:5173');
-    win.webContents.openDevTools();
+    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    // win.loadURL('http://localhost:5173');
+    // win.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {

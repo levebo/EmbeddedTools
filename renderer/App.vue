@@ -13,7 +13,7 @@ const handleSelect = (key: string, __keyPath: string[]) => {
 }
 // 打开链接
 const handleLink = async () => {
-  await window.electronAPI.openExternalWindow('https://gitee.com/levebo')
+  await window.electronAPI.openExternalWindow('https://github.com/levebo/EmbeddedTools')
 }
 </script>
 
