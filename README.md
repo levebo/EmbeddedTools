@@ -2,17 +2,7 @@
 
 嵌入式工具, 用于处理点阵文字图片、图片转数组、数组转二进制文件、串口调试等功能。用于提升嵌入式系统开发的效率
 
-<!-- PROJECT SHIELDS -->
 
-[![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
-[![Stargazers][stars-shield]][stars-url]
-[![Issues][issues-shield]][issues-url]
-[![MIT License][license-shield]][license-url]
-[![LinkedIn][linkedin-shield]][linkedin-url]
-
-<!-- PROJECT LOGO -->
-<br />
 ## 目录
 - [使用指南](#使用指南)
 - [文件目录说明](#文件目录说明)
