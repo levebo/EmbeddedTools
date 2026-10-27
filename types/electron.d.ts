@@ -1,3 +1,5 @@
+import type {ParsedPath} from "node:path";
+
 declare global {
     interface Window {
         electronAPI: {
@@ -45,9 +47,24 @@ declare global {
                 rleSize: number;
                 arrayData: Uint16Array<ArrayBuffer> | Buffer<ArrayBuffer>;
             }>, isArrayChunk: boolean, arrayChunkSize: number) => Promise<{ success: boolean; error?: string }>;
+            /**
+             * 打开选择文件相关窗口
+             * @param title 标题
+             * @param openTypes openFile - 允许选择文件
+             * openDirectory - 允许选择文件夹
+             * multiSelections-允许多选。
+             * showHiddenFiles-显示对话框中的隐藏文件。
+             * createDirectory macOS -允许你通过对话框的形式创建新的目录。
+             * promptToCreate Windows-如果输入的文件路径在对话框中不存在, 则提示创建。 这并不是真的在路径上创建一个文件，而是允许返回一些不存在的地址交由应用程序去创建。
+             * noResolveAliases macOS-禁用自动的别名路径(符号链接) 解析。 所选别名现在将会返回别名路径而非其目标路径。
+             * treatPackageAsDirectory_ macOS _-将包 (如 .app 文件夹) 视为目录而不是文件。
+             * dontAddToRecent Windows - 不要将正在打开的项目添加到最近的文档列表中。
+             */
             selectDirectory: (title: string, openTypes?: Array<'openFile' | 'openDirectory' | 'multiSelections' | 'showHiddenFiles' | 'createDirectory' | 'promptToCreate' | 'noResolveAliases' | 'treatPackageAsDirectory' | 'dontAddToRecent'>) => Promise<{
-                success: boolean;
+                success: boolean
                 path?: string
+                /** 选择多个文件时返回 */
+                paths?: ParsedPath[]
             }>;
             getDirectoryFiles: (dirPath: string) => Promise<{ success: boolean; data?: string[]; error?: string }>;
             /**
@@ -74,7 +91,9 @@ declare global {
                     error?: string
                 }[],
                 source: { name: string, desc: string, path: string, size: number, createTime: number },
-                mergedFile: { name: string, desc: string, path: string, size: number, createTime: number }
+                mergedFile: { name: string, desc: string, path: string, size: number, createTime: number },
+                /**生成过程中的告警（例如枚举名冲突）*/
+                warnings?: string[]
             }>;
             /* 串口工具类 */
             /**
@@ -94,20 +113,89 @@ declare global {
                 isLast?: boolean,
             }>,
             /**
-             * 读取文件并返回文件分片数组
+             * 读取文件字节数据
              * @param filePath 文件路径
-             * @param chunkSize 分片大小 0为不分片
              */
-            readAndChunkFile: (filePath: string, chunkSize: number) => Promise<{
+            readFileBytes: (filePath: string) => Promise<{
                 success: boolean;
                 fileSize: number;
-                list?: Uint8Array[]
+                data?: Uint8Array
             }>;
             /**
              * 读取json文件数据
              * @param filePath 文件路径
              */
             readJSONFile: (filePath: string) => Promise<{ success: boolean, data: any, error?: string }>
+            /**
+             * 读取 用户数据保存目录 json文件数据
+             * @param fileName 文件名
+             */
+            readUserJSONFile: <T>(fileName: string) => Promise<{ success: boolean, data: T, error?: string }>
+            /**
+             * 流式读取 用户数据保存目录 json文件数据
+             * @param fileName 文件名
+             * @param type 自定义类型用于区分后续的数据回调是谁发起的
+             * @param jsonPath json读取规则可以指定读取某些内容
+             */
+            readStreamUserJSONFile: (fileName: string, type: string, jsonPath: any) => Promise<{
+                success: boolean,
+                error?: string
+            }>
+            /**
+             * 监听读取json数据 流式传输
+             * @param callback 回调数据
+             */
+            onReadStreamUserJSONData: (callback: (data: any, type: string) => void) => void
+            /**
+             * 监听读取json数据 流式传输 数据完成回调
+             * @param callback
+             */
+            onReadStreamUserJSONEnd: (callback: (type: string) => void) => void
+            /**
+             * 写入json数据到用户数据保存目录
+             * @param fileName 文件名
+             * @param data 写入数据
+             */
+            writeUserJSONFile: (fileName: string, data: any) => Promise<{ success: boolean, error?: string }>
+            /**
+             * 读取界面布局数据（旧版格式会自动迁移）
+             */
+            loadUILayout: () => Promise<{
+                success: boolean
+                data?: UILayoutProject
+                error?: string
+                migrated?: boolean
+            }>
+            /**
+             * 保存界面布局数据
+             * @param store 布局数据
+             */
+            saveUILayout: (store: UILayoutProject) => Promise<{ success: boolean, error?: string }>
+            /**
+             * 流式修改json数据到用户数据保存目录
+             * @param fileName 文件名
+             * @param jsonPath json读取规则可以指定读取某些内容
+             * @param modify 需要修改的数据
+             */
+            modifyStreamUserJSONFile: (fileName: string, jsonPath: any, modify: Object) => Promise<{
+                success: boolean,
+                error?: string
+            }>
+            /**
+             * 读取base64 图片文件
+             * @param filePath 文件路径
+             * @param fileName 文件名
+             */
+            readImageBase64: (filePath: string, fileName: string) => Promise<{
+                success: boolean
+                error?: string
+                filePath: string
+                enumName: string
+                width: number
+                height: number
+                size: number
+                fileBase64: string
+            }>;
             /**
              * 获取串口列表
              * @param callback
@@ -138,7 +226,7 @@ declare global {
              * @param data
              * @param filename 文件名
              */
-            downloadFile: (data: string, filename: string) => Promise<{ success: boolean }>;
+            downloadFile: (data: string | Uint8Array, filename: string) => Promise<{ success: boolean }>;
         };
     }
 
@@ -320,7 +408,148 @@ declare global {
         /*未接收到响应时重试次数*/
         receiveRetryNum: number,
         /*响应指令脚本代码*/
-        receiveCode: string
+        receiveCode: string,
+        /*是否记录发送文件串口数据*/
+        isFileSendDataLog: boolean
+    }
+
+    /** 图片信息 */
+    interface ImgOptions {
+        filePath: string
+        fileName: string
+        originalFileName: string
+        index: number
+        enumName?: string
+        base64?: string
+        width?: number
+        height?: number
+        size?: number
+    }
+
+    /** 界面布局配置信息 */
+    interface UILayoutOption {
+        inputDir: string
+        inputWidth: number
+        inputHeight: number
+        /**屏幕宽度*/
+        width: number
+        /**屏幕高度*/
+        height: number
+        /**是否显示X轴居中辅助线*/
+        showXCenter: boolean
+        /**是否显示Y轴居中辅助线*/
+        showYCenter: boolean
+        zoomScale: number
+        bgColor: string
+        imgList: ImgOptions[]
+        imgListLoading: boolean
+    }
+
+    /**UI界面布局信息*/
+    interface UILayout {
+        /**布局项唯一标识（同一张图片允许放置多次）*/
+        id?: string
+        /**当前是否选中*/
+        active: boolean
+        /**图片宽度*/
+        width: number
+        /**图片高度*/
+        height: number
+        /**图片的X轴起始坐标*/
+        x: number,
+        /**图片的Y轴起始坐标*/
+        y: number,
+        /**X轴方向是否居中*/
+        isXCenter: boolean
+        /**Y轴方向是否居中*/
+        isYCenter: boolean
+        /**图片名称*/
+        fileName: string
+        /**图片在原数据的下标*/
+        index: number
+        /**图片的枚举名称*/
+        enumName?: string
+        /**图片的base64数据*/
+        base64?: string
+        /**图片大小*/
+        size?: number
+    }
+
+    /**UI界面数据*/
+    interface UILayoutData {
+        /**当前选中的图片信息*/
+        select?: UILayout
+        /**布局列表*/
+        list: UILayout[]
+    }
+
+    /**布局快照中的单个图片位置*/
+    interface UILayoutSnapshotItem {
+        /**布局项唯一标识*/
+        id: string
+        /**图片枚举名（资源契约的稳定键）*/
+        enumName: string
+        /**图片文件名（不含扩展名，枚举名缺失时兜底）*/
+        fileName: string
+        /**X轴起始坐标*/
+        x: number
+        /**Y轴起始坐标*/
+        y: number
+    }
+
+    /**一次保存的界面布局快照*/
+    interface UILayoutSnapshot {
+        id: string
+        /**布局名称*/
+        name: string
+        /**图片资源目录*/
+        inputDir: string
+        /**屏幕宽度*/
+        width: number
+        /**屏幕高度*/
+        height: number
+        /**背景色*/
+        bgColor: string
+        /**最后更新时间（毫秒时间戳）*/
+        updateTime: number
+        /**图片位置列表*/
+        items: UILayoutSnapshotItem[]
+    }
+
+    /**界面布局持久化数据*/
+    interface UILayoutStore {
+        version: 2
+        history: UILayoutSnapshot[]
+    }
+
+    /**一个界面的布局*/
+    interface UILayoutScreen {
+        id: string
+        /**界面名称（可中文）*/
+        name: string
+        /**生成的 C 标识，如 SCREEN_1*/
+        codeName: string
+        /**屏幕宽度*/
+        width: number
+        /**屏幕高度*/
+        height: number
+        /**背景色*/
+        bgColor: string
+        /**图片位置列表*/
+        items: UILayoutSnapshotItem[]
+    }
+
+    /**界面工程数据*/
+    interface UILayoutProject {
+        version: 3
+        /**工程名称*/
+        name: string
+        /**图片资源目录*/
+        inputDir: string
+        /**当前编辑的界面 id*/
+        activeScreenId: string
+        /**界面列表*/
+        screens: UILayoutScreen[]
     }
 }
 

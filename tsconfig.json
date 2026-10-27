@@ -1,28 +1,39 @@
 {
   "compilerOptions": {
-    "target": "es2016",
-    "module": "commonjs",
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": [
+      "ES2020",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "downlevelIteration": true,
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
     "baseUrl": ".",
     "paths": {
       "@/*": [
         "./renderer/*"
+      ],
+      "@element-plus/icons-vue": [
+        "./node_modules/@element-plus/icons-vue/dist/types/index.d.ts"
       ]
     }
   },
   "include": [
-    "**/*.d.ts"
+    "**/*.d.ts",
+    "renderer/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
-  ],
-  "references": [
-    {
-      "path": ".eslintrc-auto-import.json"
-    }
+    "node_modules",
+    "dist",
+    "out"
   ]
 }

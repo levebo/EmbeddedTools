@@ -44,6 +44,10 @@ export default defineConfig({
             autoInstall: true,
         })
     ],
+    server: {
+        port: 5173,
+        strictPort: true,
+    },
     resolve: {
         alias: {
             '@': fileURLToPath(new URL('./renderer', import.meta.url))

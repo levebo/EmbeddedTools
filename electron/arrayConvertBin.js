@@ -1,20 +1,10 @@
 import path from "path";
 
 import {accessSync, createWriteStream, mkdirSync, readFileSync, statSync, writeFileSync} from "fs";
+import {finished} from "node:stream/promises";
 import {Jimp} from "jimp";
 import {pinyin} from "pinyin";
 
-// 检测系统字节序是否小端序
-const isSystemLittleEndian = () => {
-    const buffer = new ArrayBuffer(2);
-    const uint16 = new Uint16Array(buffer);
-    const uint8 = new Uint8Array(buffer);
-    uint16[0] = 0xABCD;
-    return uint8[0] === 0xCD;
-}
-
-// 系统是否小端序
-const systemLittleEndian = isSystemLittleEndian();
 /**
  * RLE解码
  * @param encoded 编码后的数据
@@ -71,6 +61,49 @@ export const rleDecodeRgb565 = (encoded, littleEndian = true) => {
     return u8Data;
 };
 
+/**
+ * RLE解码RGB666（3字节存储方式）
+ * @param encoded 编码后的数据
+ * @returns {Uint8Array<ArrayBuffer>} 解码后的RGB666像素数据（每像素3字节）
+ */
+export const rleDecodeRgb666 = (encoded) => {
+    const decoded = [];
+    let i = 0;
+    const len = encoded.length;
+
+    // 从三个字节读取一个RGB666像素值
+    const readPixel = () => {
+        const byte1 = encoded[i++]; // R (6位有效，高2位为0)
+        const byte2 = encoded[i++]; // G (6位有效，高2位为0)
+        const byte3 = encoded[i++]; // B (6位有效，高2位为0)
+        return [byte1, byte2, byte3];
+    };
+
+    while (i < len) {
+        const count = encoded[i++];
+
+        if (count >= 128) {
+            // 重复序列：最高位为1
+            const repeatCount = count - 128;
+            const pixel = readPixel();
+
+            for (let j = 0; j < repeatCount; j++) {
+                decoded.push(pixel[0], pixel[1], pixel[2]);
+            }
+        } else {
+            // 非重复序列：最高位为0
+            const nonRepeatCount = count;
+
+            for (let j = 0; j < nonRepeatCount; j++) {
+                const pixel = readPixel();
+                decoded.push(pixel[0], pixel[1], pixel[2]);
+            }
+        }
+    }
+
+    return new Uint8Array(decoded);
+};
+
 // RGB565 转 RGB888
 const RGB565_TO_RGB888 = (rgb565) => {
     const r5 = (rgb565 >> 11) & 0x1F;  // 取高5位 (红色)
@@ -81,6 +114,17 @@ const RGB565_TO_RGB888 = (rgb565) => {
     const g = Math.round((g6 / 63) * 255);
     const b = Math.round((b5 / 31) * 255);
     return {r, g, b}
+};
+
+// RGB666 转 RGB888（针对3字节存储格式）
+const RGB666_TO_RGB888 = (r6, g6, b6) => {
+    // 将6位值(0-63)扩展到8位(0-255)
+    // 使用公式：8位值 = (6位值 * 255) / 63
+    // 或者等价于：8位值 = (6位值 << 2) | (6位值 >> 4)
+    const r = Math.round((r6 / 63) * 255);
+    const g = Math.round((g6 / 63) * 255);
+    const b = Math.round((b6 / 63) * 255);
+    return {r, g, b};
 };
 
 /**
@@ -107,12 +151,15 @@ export const processImages = async ({files, outputDir, mergedFileName, showRLE, 
     const mergedFileFillName = `${mergedFileName}.bin`;
     const mergedFilePath = path.join(outputDir, mergedFileFillName);
     const mergedStream = createWriteStream(mergedFilePath);
+    // 先挂一个 error 监听，避免后续 finished() 还没接管时出现未处理错误导致主进程退出
+    mergedStream.on('error', () => {
+    });
 
     // 处理每个文件
     for (const inputFile of files) {
         try {
             const file = readFileSync(inputFile.filePath, "utf-8");
-            const {width, height, bytesPerPixel, isRLE, littleEndian, byteArray} = extractImageData(file);
+            const {width, height, bytesPerPixel, colorType, isRLE, littleEndian, byteArray} = extractImageData(file);
             const fileName = path.basename(inputFile.fileName, '.c');
 
             // 写入单个bin文件
@@ -130,6 +177,7 @@ export const processImages = async ({files, outputDir, mergedFileName, showRLE, 
                 height,
                 fileName,
                 bytesPerPixel,
+                colorType,
                 isRLE,
                 littleEndian
             };
@@ -179,22 +227,72 @@ export const processImages = async ({files, outputDir, mergedFileName, showRLE, 
                     })
                     items.fileBase64 = await image.getBase64("image/png")
                 }
-            } else if (bytesPerPixel === 3) { // RGB888
-                const image = await new Jimp({width, height})
-                // 解析 RGB888 数据并设置像素颜色
-                image.scan(0, 0, width, height, (x, y, idx) => {
-                    // 计算当前像素在二进制数据中的偏移量
-                    const offset = (y * width + x) * 3;
-                    // 提取 RGB 通道值
-                    const r = byteArray[offset];
-                    const g = byteArray[offset + 1];
-                    const b = byteArray[offset + 2];
-                    image.bitmap.data[idx] = r;
-                    image.bitmap.data[idx + 1] = g;
-                    image.bitmap.data[idx + 2] = b;
-                    image.bitmap.data[idx + 3] = 255;
-                })
-                items.fileBase64 = await image.getBase64("image/png")
+            } else if (bytesPerPixel === 3) {
+                // 根据颜色类型区分处理
+                if (colorType === 3) { // RGB888
+                    const image = await new Jimp({width, height})
+                    // 解析 RGB888 数据并设置像素颜色
+                    image.scan(0, 0, width, height, (x, y, idx) => {
+                        // 计算当前像素在二进制数据中的偏移量
+                        const offset = (y * width + x) * 3;
+                        // 提取 RGB 通道值
+                        const r = byteArray[offset];
+                        const g = byteArray[offset + 1];
+                        const b = byteArray[offset + 2];
+                        image.bitmap.data[idx] = r;
+                        image.bitmap.data[idx + 1] = g;
+                        image.bitmap.data[idx + 2] = b;
+                        image.bitmap.data[idx + 3] = 255;
+                    })
+                    items.fileBase64 = await image.getBase64("image/png")
+                } else if (colorType === 2) { // RGB666
+                    // RGB666 处理
+                    let rgb666Data = null;
+                    // 根据编码类型解码
+                    if (isRLE) {
+                        rgb666Data = rleDecodeRgb666(byteArray);
+                    } else {
+                        // 非RLE编码，直接使用原始数据
+                        rgb666Data = byteArray;
+                    }
+
+                    if (rgb666Data) {
+                        const image = await new Jimp({width, height});
+                        image.scan(0, 0, width, height, (x, y, idx) => {
+                            // 计算当前像素在二进制数据中的偏移量
+                            const offset = (y * width + x) * 3;
+
+                            // 提取 RGB 通道值
+                            const r666 = rgb666Data[offset];
+                            const g666 = rgb666Data[offset + 1];
+                            const b666 = rgb666Data[offset + 2];
+
+                            const {r, g, b} = RGB666_TO_RGB888(r666, g666, b666);
+
+                            image.bitmap.data[idx] = r;
+                            image.bitmap.data[idx + 1] = g;
+                            image.bitmap.data[idx + 2] = b;
+                            image.bitmap.data[idx + 3] = 255;
+                        });
+                        items.fileBase64 = await image.getBase64("image/png");
+                    }
+                } else {
+                    // 未知的3字节格式，默认按RGB888处理
+                    console.warn(`未知的颜色类型 ${colorType}，按RGB888处理`);
+                    const image = await new Jimp({width, height});
+                    image.scan(0, 0, width, height, (x, y, idx) => {
+                        const offset = (y * width + x) * 3;
+                        const r = byteArray[offset];
+                        const g = byteArray[offset + 1];
+                        const b = byteArray[offset + 2];
+                        image.bitmap.data[idx] = r;
+                        image.bitmap.data[idx + 1] = g;
+                        image.bitmap.data[idx + 2] = b;
+                        image.bitmap.data[idx + 3] = 255;
+                    });
+                    items.fileBase64 = await image.getBase64("image/png");
+                }
+
             }
             results.push(items);
             totalOffset += byteArray.length;
@@ -206,24 +304,17 @@ export const processImages = async ({files, outputDir, mergedFileName, showRLE, 
             });
         }
     }
-
+    // 关闭合并文件流，并等待真正写完再读取文件大小
     mergedStream.end();
+    await finished(mergedStream);
 
     // 生成图片信息源文件
-    const sourceContent = generateSourceContent(imageInfos, showRLE, isEnumMapping);
+    const {content: sourceContent, warnings} = generateSourceContent(imageInfos, showRLE, isEnumMapping);
 
     const sourceName = 'images_info.c';
     const sourcePath = path.join(outputDir, sourceName);
 
     writeFileSync(sourcePath, sourceContent);
-
-    const wait = async (ms) => {
-        return new Promise((resolve) => {
-            setTimeout(resolve, ms)
-        })
-    }
-
-    await wait(100);
 
     const sourceStats = statSync(sourcePath);
     const mergedFileStats = statSync(mergedFilePath);
@@ -242,7 +333,7 @@ export const processImages = async ({files, outputDir, mergedFileName, showRLE, 
         size: mergedFileStats.size,
         createTime: mergedFileStats.mtime
     }
-    return {results, source, mergedFile};
+    return {results, source, mergedFile, warnings};
 };
 
 // 提取图像数据
@@ -270,11 +361,12 @@ function extractImageData(content) {
     const widthMatch = structBody.match(/unsigned\s+int\s+width\s*;/);
     const heightMatch = structBody.match(/unsigned\s+int\s+height\s*;/);
     const bppMatch = structBody.match(/unsigned\s+int\s+bytes_per_pixel\s*;/);
+    const colorTypeMatch = structBody.match(/unsigned\s+int\s+color_type\s*;/);
     const isRLEMatch = structBody.match(/unsigned\s+char\s+is_rle\s*;/);
     const dataLengthMatch = structBody.match(/unsigned\s+int\s+data_length\s*;/);
 
-    if (!widthMatch || !heightMatch || !bppMatch || !isRLEMatch || !dataLengthMatch) {
-        throw new Error('结构体中缺少必要的字段(width, height, bytes_per_pixel, is_rle, data_length)');
+    if (!widthMatch || !heightMatch || !bppMatch || !colorTypeMatch || !isRLEMatch || !dataLengthMatch) {
+        throw new Error('结构体中缺少必要的字段(width, height, bytes_per_pixel, color_type, is_rle, data_length)');
     }
 
     // 改进的初始化值解析 - 处理多行和缩进
@@ -282,29 +374,31 @@ function extractImageData(content) {
     const firstLine = initLines[0];
     const lastLine = initLines[initLines.length - 1];
 
-    // 提取前5个值（宽度、高度、bpp、是否RLE编码、数据大小）
+    // 提取前6个值（宽度、高度、bpp、颜色类型、是否RLE编码、数据大小）
     const headerValues = firstLine.split(',')
         .map(val => val.trim().replace(/,$/, ''))
         .filter(val => val !== '');
 
-    if (headerValues.length < 5) {
+    if (headerValues.length < 6) {
         throw new Error('无法解析结构体初始化值 - 缺少必要的头部值');
     }
 
     const width = parseInt(headerValues[0], 10);
     const height = parseInt(headerValues[1], 10);
     const bytesPerPixel = parseInt(headerValues[2], 10);
-    const isRLE = Boolean(Number(headerValues[3]));
-    const dataSize = parseInt(headerValues[4], 10);
+    const colorType = parseInt(headerValues[3], 10);
+    const isRLE = Boolean(Number(headerValues[4]));
+    const dataSize = parseInt(headerValues[5], 10);
 
     // 提取数组数据
-    const arrayStart = initValues.indexOf('{') + 1;
+    const arrayStartIndex = initValues.indexOf('{');
     const arrayEnd = initValues.lastIndexOf('}');
 
-    if (arrayStart === -1 || arrayEnd === -1) {
+    if (arrayStartIndex === -1 || arrayEnd === -1) {
         throw new Error('无法定位数组数据');
     }
 
+    const arrayStart = arrayStartIndex + 1;
     const arrayContent = initValues.slice(arrayStart, arrayEnd).trim();
 
     // 清理数组内容字符串
@@ -328,12 +422,33 @@ function extractImageData(content) {
         return parseInt(trimmed, 10);
     }));
 
-    return {width, height, bytesPerPixel, isRLE, littleEndian, byteArray};
+    return {width, height, bytesPerPixel, colorType, isRLE, littleEndian, byteArray};
+}
+
+/**
+ * 枚举名兜底：文件名里没有可用字母/数字时，用文件名哈希生成稳定名称
+ * 注意：main.js 中有同样的实现，两处必须保持一致
+ * @param fileName 文件名（不含扩展名）
+ * @returns {string}
+ */
+function enumNameFallback(fileName) {
+    let hash = 0;
+    for (let i = 0; i < fileName.length; i++) {
+        hash = ((hash << 5) - hash + fileName.charCodeAt(i)) | 0;
+    }
+    return Math.abs(hash).toString(16).toUpperCase();
 }
 
 // 生成源文件内容
 function generateSourceContent(imageInfos, showRLE, isEnumMapping) {
-    let sourceContent = `
+    if (imageInfos.length === 0) {
+        return {
+            content: `#include <stddef.h>\n\n#define  IMAGE_INFOS_NUM                          0 ///< 图片数量长度\n`,
+            warnings: []
+        };
+    }
+
+    let sourceContent = `#include <stddef.h>
 
 // 字节序 1：小端序 0：大端序
 #define LITTLE_ENDIAN       ${imageInfos[0].littleEndian ? 1 : 0}
@@ -366,10 +481,14 @@ typedef struct {
 
     for (let i = 0; i < imageInfos.length; i++) {
         const info = imageInfos[i];
-        sourceContent += `    { 0x${info.offset.toString(16).padStart(8, '0').toUpperCase()}, ${info.size}, ${info.width}, ${info.height} }, // ${i}: ${info.fileName}\n`;
+        sourceContent += `    { 0x${info.offset.toString(16).padStart(8, '0').toUpperCase()}, ${info.size}, ${info.width}, ${info.height}${showRLE ? ', ' + (info.isRLE ? 1 : 0) : ''} }, // ${i}: ${info.fileName}\n`;
     }
 
     sourceContent += `};\n\n`;
+
+    // 枚举名重复时生成的 C 代码会重定义，这里收集起来提示用户
+    const warnings = [];
+    const enumNameCounts = new Map();
 
     // 判断是否需要生成枚举映射信息
     if (isEnumMapping) {
@@ -381,15 +500,25 @@ typedef struct {
             const upperCasePinyin = pinyinName.toUpperCase();
             // 移除特殊字符，只保留字母、数字和下划线
             const validName = upperCasePinyin.replace(/[^a-zA-Z0-9_]/g, '');
-            // 确保不以数字开头，如果以数字开头则添加前缀
-            const finalName = /^\d/.test(validName) ? `IMG_${validName}` : validName;
+            // 确保不以数字开头，如果以数字开头则添加前缀；纯符号名用哈希兜底
+            const finalName = validName
+                ? (/^\d/.test(validName) ? `IMG_${validName}` : validName)
+                : `IMG_${enumNameFallback(info.fileName)}`;
+            enumNameCounts.set(finalName, (enumNameCounts.get(finalName) || 0) + 1);
             sourceContent += `  /* ${i}: ${info.fileName} */\n  ${finalName}${i === 0 ? ' = 0' : ''},\n`;
         }
         sourceContent += `} ImageMapping;\n\n`;
     }
 
+    const conflicts = [...enumNameCounts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([name]) => name);
+    if (conflicts.length > 0) {
+        warnings.push(`图片枚举名冲突: ${conflicts.join(', ')}，请修改文件名后重新生成`);
+    }
+
     // 定义图像数量
     sourceContent += `#define  IMAGE_INFOS_NUM                          ${imageInfos.length} ///< 图片数量长度\n`;
 
-    return sourceContent;
+    return {content: sourceContent, warnings};
 }

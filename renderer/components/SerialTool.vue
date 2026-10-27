@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {computed, nextTick, reactive, ref, toRaw, watch} from "vue";
+import {computed, nextTick, reactive, ref, toRaw, useTemplateRef, watch} from "vue";
 import {
   Back,
   CircleCloseFilled,
@@ -20,9 +20,40 @@ import {formatTime} from "@/util/dataUtil";
 import {formatSize, hexStringToUint8Array, uint8ArrayToHexString, uint8ArrayToString} from "@/util/convertUtil";
 import {awaitTime, awaitTimeout, execReceiveCustomScript, execSendCustomScript} from "@/util/SerialUtil";
 import SerialFileConfigWin from "@/components/SerialFileConfigWin.vue";
+import CountDown from "@/components/CountDown.vue";
 
 /*串口调试工具*/
 defineOptions({name: 'SerialTool'});
+/**
+ * 波特率数组
+ */
+const baudRates = [
+  110,
+  300,
+  600,
+  1200,
+  2400,
+  4800,
+  9600,
+  14400,
+  19200,
+  38400,
+  56000,
+  57600,
+  115200,
+  128000,
+  230400,
+  256000,
+  460800,
+  500000,
+  512000,
+  600000,
+  750000,
+  921600,
+  1000000,
+  1500000,
+  2000000
+]
 
 /*快捷指令对象*/
 interface CodeTypes {
@@ -66,7 +97,7 @@ let extendList: ExtendTypes[] = [{
 }];
 
 // 最大日志记录条数
-const MAX_LOGS_SIZE = 3000;
+const MAX_LOGS_SIZE = 2000;
 let reader: ReadableStreamDefaultReader<Uint8Array>;
 
 /*日志传输方向：接收 | 发送*/
@@ -116,7 +147,7 @@ interface ExtendOptions {
 /**
  * 默认文件配置
  */
-const defaultFileOptions = {
+const defaultFileOptions: SendFileOptions = {
   filePath: '',
   fileSize: 0,
   fileProgress: 0,
@@ -124,6 +155,9 @@ const defaultFileOptions = {
   sendCode: `// 发送指令时可以自定义发送格式 方便添加校检等
 // 可以参考以下配置 下面是实现了添加校检规则发送指令
 // sendData 发送数据
+// options 其他参数
+// options.chunkIndex 当前分片索引
+// options.chunkSize  分片大小
 /**
  * 计算校验和
  * @param data 数组
@@ -219,8 +253,9 @@ if(containsSequence(receiveData, targetReceiveSequence)
 }
 
 // success 返回 true 表示响应正常会继续发送分片. 返回 false 表示发送失败根据配置是否重试可以重新尝试发送响应失败的数据
-return { success: false, sendData, receiveData }`
-} as SendFileOptions;
+return { success: false, sendData, receiveData }`,
+  isFileSendDataLog: false
+};
 
 // 默认拓展功能配置
 const defaultExtendOptions = {
@@ -248,9 +283,14 @@ if (extendOptionsLS) {
   extendOptionsSave = JSON.parse(JSON.stringify(defaultExtendOptions))
 }
 /**
+ * 底部发送文件配置
+ */
+const bottomSendFileOption = reactive<SendFileOptions>(sendFileOptionSave)
+
+/**
  * 发送文件配置
  */
-const sendFileOption = reactive<SendFileOptions>(sendFileOptionSave)
+const sendFileOption = ref<SendFileOptions>(bottomSendFileOption)
 
 /**
  * 串口配置对象
@@ -380,6 +420,10 @@ const showLogComputed = computed(() => {
   }
   return isShow
 })
+// 计时组件引用
+const countDownRef = useTemplateRef<InstanceType<typeof CountDown>>(null)
+// 是否开始计时
+const startTimeCountDown = ref(false)
 
 const readData = async () => {
   serialOptions.isReading = true;
@@ -406,7 +450,7 @@ const readData = async () => {
     }
   }
   if (serialOptions.selectedOpenPort.connected) {
-    await serialOptions.selectedOpenPort.close();
+    await serialOptions.selectedOpenPort?.close();
   }
 }
 /**
@@ -422,17 +466,19 @@ const handleReaderData = (value: Uint8Array) => {
 
   // 如果是发送文件 判断是否需要处理自定义脚本
   if (serialOptions.isSendFile && serialOptions.isSending) {
-    if (sendFileOption.isReceiveCode) {
+    if (sendFileOption.value.isReceiveCode) {
       const {
         success,
         receiveData
-      } = execReceiveCustomScript(sendFileOption.currentSendBytes, dataBuffer, sendFileOption.receiveCode)
-      if (!sendFileOption.currentReceiveSuccess) {
-        sendFileOption.currentReceiveSuccess = success;
+      } = execReceiveCustomScript(sendFileOption.value.currentSendBytes, dataBuffer, sendFileOption.value.receiveCode)
+      if (!sendFileOption.value.currentReceiveSuccess) {
+        sendFileOption.value.currentReceiveSuccess = success;
       }
       if (success) {
         // console.log('成功传输文件数据:', uint8ArrayToHexString(sendFileOption.currentSendBytes), '\n 响应指令:', uint8ArrayToHexString(dataBuffer))
-        showReaderData(dataBuffer);
+        if (sendFileOption.value.isFileSendDataLog) {
+          showReaderData(dataBuffer);
+        }
         dataBuffer = receiveData;
       }
     } else {
@@ -558,19 +604,19 @@ const sendSystem = (msg: string): void => {
 const retrySendFileChunk = async (currentRetryNum: number, writer: WritableStreamDefaultWriter): Promise<void> => {
   const doRetry = async (currentRetryNum: number) => {
     // 检查是否在等待期间收到了成功响应
-    if (sendFileOption.currentReceiveSuccess) {
+    if (sendFileOption.value.currentReceiveSuccess) {
       // 已响应 停止重试逻辑
       return;
     }
     // 发送数据
-    await writer.write(sendFileOption.currentSendBytes);
-    if (currentRetryNum < sendFileOption.receiveRetryNum) {
+    await writer.write(sendFileOption.value.currentSendBytes);
+    if (currentRetryNum < sendFileOption.value.receiveRetryNum) {
       // 重试延迟
-      await awaitTimeout(sendFileOption.receiveRetryTime, 5, (elapsed) => {
-        return sendFileOption.currentReceiveSuccess;
+      await awaitTimeout(sendFileOption.value.receiveRetryTime, 5, (elapsed) => {
+        return sendFileOption.value.currentReceiveSuccess;
       });
       // 检查是否在等待期间收到了成功响应
-      if (sendFileOption.currentReceiveSuccess) {
+      if (sendFileOption.value.currentReceiveSuccess) {
         return;
       }
       sendSystem('发送文件等待响应信息，重试' + (currentRetryNum + 1) + '次');
@@ -588,8 +634,8 @@ const retrySendFileChunk = async (currentRetryNum: number, writer: WritableStrea
 /**
  * 处理通过串口发送文件
  */
-const handleSendFile = async (writer: WritableStreamDefaultWriter, fileOption: SendFileOptions) => {
-  if (fileOption.filePath === '') {
+const handleSendFile = async (writer: WritableStreamDefaultWriter) => {
+  if (sendFileOption.value.filePath === '') {
     ElMessage.error('请选择有效的文件')
     writer.releaseLock();
     serialOptions.isSending = false
@@ -597,15 +643,15 @@ const handleSendFile = async (writer: WritableStreamDefaultWriter, fileOption: S
   }
 
   // 1. 先获取文件大小
-  const {success, fileSize} = await window.electronAPI.getFileSize(fileOption.filePath);
+  const {success, fileSize} = await window.electronAPI.getFileSize(sendFileOption.value.filePath);
   if (!success) {
     ElMessage.error('获取文件大小失败');
     writer.releaseLock();
     serialOptions.isSending = false;
     return;
   }
-  fileOption.fileSize = fileSize;
-  const chunkSize = fileOption.isChunkSend ? fileOption.chunkSize : fileSize;
+  sendFileOption.value.fileSize = fileSize;
+  const chunkSize = sendFileOption.value.isChunkSend ? sendFileOption.value.chunkSize : fileSize;
   const totalChunks = Math.ceil(fileSize / chunkSize);
 
   // 2. 逐块读取和发送
@@ -613,9 +659,9 @@ const handleSendFile = async (writer: WritableStreamDefaultWriter, fileOption: S
     // console.log('当前块', chunkIndex + 1, '总共', totalChunks);
     // 计算当前 chunkIndex 相对于数组的百分比
     if (chunkIndex === totalChunks - 1) {
-      fileOption.fileProgress = 100;
+      sendFileOption.value.fileProgress = 100;
     } else {
-      fileOption.fileProgress = Number(((chunkIndex / totalChunks) * 100).toFixed(1));
+      sendFileOption.value.fileProgress = Number(((chunkIndex / totalChunks) * 100).toFixed(1));
     }
 
     // 读取当前块
@@ -623,7 +669,7 @@ const handleSendFile = async (writer: WritableStreamDefaultWriter, fileOption: S
       success: readSuccess,
       data,
       isLast
-    } = await window.electronAPI.readFileChunk(fileOption.filePath, chunkIndex, chunkSize);
+    } = await window.electronAPI.readFileChunk(sendFileOption.value.filePath, chunkIndex, chunkSize);
 
     if (!readSuccess) {
       ElMessage.error(`读取第${chunkIndex + 1}块失败`);
@@ -631,38 +677,40 @@ const handleSendFile = async (writer: WritableStreamDefaultWriter, fileOption: S
     }
 
     // 重置接收状态
-    fileOption.currentReceiveSuccess = false;
+    sendFileOption.value.currentReceiveSuccess = false;
 
     let bytes = data
     // 是否开启自定义处理发送信息
-    if (fileOption.isSendCode) {
-      bytes = execSendCustomScript(bytes, fileOption.sendCode)
+    if (sendFileOption.value.isSendCode) {
+      bytes = execSendCustomScript(bytes, {chunkIndex, chunkSize}, sendFileOption.value.sendCode)
     }
     const hex = uint8ArrayToHexString(bytes);
     const text = uint8ArrayToString(bytes);
 
     // 保存当前发送的数据用于脚本处理
-    fileOption.currentSendBytes = new Uint8Array(bytes);
+    sendFileOption.value.currentSendBytes = new Uint8Array(bytes);
     // 判断是否开启响应状态自定义脚本并判断是否需要重试
-    if (fileOption.isReceiveCode && fileOption.receiveRetryNum > 0) {
+    if (sendFileOption.value.isReceiveCode && sendFileOption.value.receiveRetryNum > 0) {
       await retrySendFileChunk(0, writer);
     } else {
       // 发送串口数据
       await writer.write(bytes);
     }
 
-    serialOptions.logs.push({
-      time: formatTime(new Date(), true),
-      logType: 'serial',
-      transferType: 'tx',
-      dataType: serialOptions.logDataType,
-      text,
-      hex
-    });
+    if (sendFileOption.value.isFileSendDataLog) {
+      serialOptions.logs.push({
+        time: formatTime(new Date(), true),
+        logType: 'serial',
+        transferType: 'tx',
+        dataType: serialOptions.logDataType,
+        text,
+        hex
+      });
+    }
 
     // 判断是否设置分片发送间隔
-    if (fileOption.chunkSpeed > 0) {
-      await awaitTime(fileOption.chunkSpeed)
+    if (sendFileOption.value.chunkSpeed > 0) {
+      await awaitTime(sendFileOption.value.chunkSpeed)
     }
 
     if (isLast) break;
@@ -678,14 +726,14 @@ const bottomSendData = async () => {
   if (serialOptions.isLoop) {
     serialOptions.isLoopSending = true;
     while (serialOptions.isLoopSending) {
-      await sendData(sendText.value, serialOptions.sendType, serialOptions.isSendFile, sendFileOption);
+      await sendData(sendText.value, serialOptions.sendType, serialOptions.isSendFile, bottomSendFileOption);
       // 循环发送间隔
       if (serialOptions.loopTime > 0) {
         await awaitTime(serialOptions.loopTime)
       }
     }
   } else {
-    await sendData(sendText.value, serialOptions.sendType, serialOptions.isSendFile, sendFileOption);
+    await sendData(sendText.value, serialOptions.sendType, serialOptions.isSendFile, bottomSendFileOption);
   }
 }
 
@@ -720,7 +768,10 @@ const sendData = async (value: string = '', dataType: SendDataType = 'text', isS
 
     // 判断是否发送文件
     if (isSendFile) {
-      await handleSendFile(writer, sendFileOptions);
+      startTimeCountDown.value = true
+      sendFileOption.value = sendFileOptions
+      await handleSendFile(writer);
+      startTimeCountDown.value = false
     } else {
       let data = value;
       let text = '', hex = ''
@@ -773,6 +824,8 @@ const sendData = async (value: string = '', dataType: SendDataType = 'text', isS
     writer?.releaseLock();
     if (error.message === '重试次数已达上限') {
       sendSystem(error.message)
+      // 停止计时
+      startTimeCountDown.value = false
     } else {
       ElMessage.error(`发送错误: ${error.message}`);
     }
@@ -877,7 +930,7 @@ const exportLog = () => {
  */
 const selectSendFile = async () => {
   const {success, path: selectedPath} = await window.electronAPI.selectDirectory('选择输入文件夹', ["openFile"]);
-  if (success) sendFileOption.filePath = selectedPath;
+  if (success) bottomSendFileOption.filePath = selectedPath;
 };
 
 // ---------------------- 扩展分组相关 --------------------------
@@ -1116,7 +1169,7 @@ const handleDefaultConfig = () => {
 const handleExportConfig = () => {
   window.electronAPI.downloadFile(JSON.stringify({
     extendOptions,
-    sendFileOption
+    bottomSendFileOption
   }), `serial_config_${new Date().getTime()}.json`)
 }
 
@@ -1139,7 +1192,7 @@ const handleImportConfig = async () => {
         // 底部发送配置
         for (const key in fileOpt) {
           if (Object.prototype.hasOwnProperty.call(fileOpt, key)) {
-            sendFileOption[key] = fileOpt[key];
+            bottomSendFileOption[key] = fileOpt[key];
           }
         }
         ElMessage.success('导入配置成功')
@@ -1156,7 +1209,7 @@ const handleImportConfig = async () => {
  * 关闭时保存配置到本地
  */
 window.onbeforeunload = () => {
-  localStorage.setItem('sendFileOption', JSON.stringify(sendFileOption));
+  localStorage.setItem('sendFileOption', JSON.stringify(bottomSendFileOption));
   localStorage.setItem('extendOptions', JSON.stringify(extendOptions));
 }
 </script>
@@ -1192,9 +1245,8 @@ window.onbeforeunload = () => {
           </el-select>
         </el-form-item>
         <el-form-item label="波特率">
-          <el-select style="width: 114px;" v-model="serialOptions.baudRate">
-            <el-option :value="9600">9600</el-option>
-            <el-option :value="115200">115200</el-option>
+          <el-select style="width: 114px;" v-model.trim.number="serialOptions.baudRate" allow-create filterable>
+            <el-option v-for="item in baudRates" :value="item">{{ item }}</el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="数据位">
@@ -1314,14 +1366,14 @@ window.onbeforeunload = () => {
           <template v-if="serialOptions.isSendFile">
             <el-row style="margin: 0 0.5%">
               <el-col :span="17" style="display: flex; align-items: center;">
-                <el-input :title="sendFileOption.filePath" readonly style="flex: 1;" v-model="sendFileOption.filePath">
+                <el-input :title="bottomSendFileOption.filePath" readonly style="flex: 1;" v-model="bottomSendFileOption.filePath">
                   <template #append>
                     <el-button @click="selectSendFile">选择文件</el-button>
                   </template>
                 </el-input>
               </el-col>
               <el-col style="display: flex;" :span="3">
-                <SerialFileConfigWin :file-options="sendFileOption"/>
+                <SerialFileConfigWin :file-options="bottomSendFileOption"/>
               </el-col>
               <el-col style="display: flex;" :span="4">
                 <el-button :loading="serialOptions.isSending" :disabled="serialOptions.isSending"
@@ -1330,15 +1382,18 @@ window.onbeforeunload = () => {
                 </el-button>
               </el-col>
             </el-row>
-            <el-row v-if="sendFileOption.fileProgress > 0" style="margin: 6px 0.5% 0 0.5%">
-              <el-col :span="20">
-                <el-progress :percentage="sendFileOption.fileProgress" :text-inside="true"
-                             :stroke-width="20" :status="sendFileOption.fileProgress >= 100 ? 'success' : ''"/>
+            <el-row v-if="bottomSendFileOption.fileProgress > 0" style="margin: 6px 0.5% 0 0.5%">
+              <el-col :span="16">
+                <el-progress :percentage="bottomSendFileOption.fileProgress" :text-inside="true"
+                             :stroke-width="20" :status="bottomSendFileOption.fileProgress >= 100 ? 'success' : ''"/>
               </el-col>
               <el-col :span="4">
                 <el-text style="margin-left: 10px;vertical-align: text-top;">
-                  {{ formatSize(sendFileOption.fileSize) }}
+                  {{ formatSize(bottomSendFileOption.fileSize) }}
                 </el-text>
+              </el-col>
+              <el-col :span="4">
+                <CountDown :start="startTimeCountDown" ref="countDownRef"/>
               </el-col>
             </el-row>
           </template>

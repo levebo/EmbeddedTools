@@ -32,7 +32,19 @@ const {activeIndex} = defineProps<{ activeIndex: string }>();
 
 const localInputDir = localStorage.getItem('inputDir1') || ''
 const localOutputDir = localStorage.getItem('outputDir1') || ''
-const form = reactive({
+type ColorCodeType = 'RGB565' | 'RGB666' | 'RGB888'
+
+interface FormData {
+  inputDir: string;
+  outputDir: string;
+  isRLE: boolean;
+  isArrayChunk: boolean;
+  arrayChunkSize: number;
+  littleEndian: boolean;
+  colorCodedType: ColorCodeType
+}
+
+const form = reactive<FormData>({
   inputDir: localInputDir,
   outputDir: localOutputDir,
   // 是否开启RLE编码
@@ -111,48 +123,47 @@ const totalCompressionSize = computed(() => {
 /**
  * 更新目录文件列表
  */
-const updateFileList = async (): Promise<void> => {
-  // 获取输入目录中的所有图像文件
-  // 注意：这里需要主进程提供文件列表
-  return new Promise((resolve, reject) => {
-    window.electronAPI.getDirectoryFiles(form.inputDir).then(({data: files}) => {
-      // 筛选图像文件并同时初始化结果数组
-      const [imageFiles, resultFiles] = files.reduce(([imageFilesAcc, resultsAcc], file) => {
-        const ext = path.extname(file).toLowerCase();
-        if (['.jpg', '.jpeg', '.png', '.bmp'].includes(ext)) {
-          imageFilesAcc.push(file);
-          resultsAcc.push({
-            fileName: path.basename(file, path.extname(file)),
-            originalFileName: path.basename(file),
-            fileBase64: '',
-            width: 0,
-            height: 0,
-            originalSize: 0,
-            rleSize: 0,
-            arrayData: null,
-            compressionRatio: 0,
-            status: 'pending'
-          });
-        }
-        return [imageFilesAcc, resultsAcc];
-      }, [[], []]);
-      // 更新总图像文件数量
-      totalCount.value = imageFiles.length;
+const updateFileList = async (): Promise<boolean> => {
+  const {success, data: files, error} = await window.electronAPI.getDirectoryFiles(form.inputDir);
+  if (!success || !files) {
+    throw new Error(error || '读取输入目录失败');
+  }
 
-      if (imageFiles.length === 0) {
-        results.value = [];
-        ElMessage.warning('输入目录中没有找到支持的图像文件');
-        isProcessing.value = false;
-        return;
-      }
-
-      // 更新结果数组
-      resultsNotRef = resultFiles;
-      resolve();
-    }).catch((error) => {
-      reject(error);
+  const imageFiles: string[] = [];
+  const resultFiles: ConversionResult[] = [];
+  for (const file of files) {
+    if (!['.jpg', '.jpeg', '.png', '.bmp'].includes(path.extname(file).toLowerCase())) {
+      continue;
+    }
+    imageFiles.push(file);
+    resultFiles.push({
+      fileName: path.basename(file, path.extname(file)),
+      originalFileName: path.basename(file),
+      fileBase64: '',
+      width: 0,
+      height: 0,
+      originalSize: 0,
+      rleSize: 0,
+      arrayData: new Uint16Array(0),
+      compressionRatio: 0,
+      status: 'pending'
     });
-  })
+  }
+
+  totalCount.value = imageFiles.length;
+  currentCount.value = 0;
+
+  if (imageFiles.length === 0) {
+    resultsNotRef = [];
+    results.value = [];
+    activeFile.value = '';
+    overallProgress.value = 0;
+    ElMessage.warning('输入目录中没有找到支持的图像文件');
+    return false;
+  }
+
+  resultsNotRef = resultFiles;
+  return true;
 }
 
 const selectInputDir = async () => {
@@ -228,7 +239,7 @@ const handleFileConversion = async (file: ConversionResult, resultIndex: number)
     }
   } catch (error) {
     resultsNotRef[resultIndex].status = 'error';
-    ElMessage.error(`文件 ${file} 转换失败: ${error.message}`);
+    ElMessage.error(`文件 ${file.originalFileName} 转换失败: ${error.message}`);
     return false;
   }
 }
@@ -242,18 +253,27 @@ const startConversion = async () => {
   try {
     isProcessing.value = true;
     overallProgress.value = 0;
+    currentCount.value = 0;
+    activeFile.value = '';
+    results.value = [];
 
-    await updateFileList();
+    const hasFiles = await updateFileList();
+    if (!hasFiles) {
+      return;
+    }
+
     let successCount = 0;
-    for (const file of resultsNotRef) {
-      const resultIndex = resultsNotRef.indexOf(file);
-      const resStatus = await handleFileConversion(file, resultIndex)
+    for (let index = 0; index < resultsNotRef.length; index++) {
+      const file = resultsNotRef[index];
+      const resStatus = await handleFileConversion(file, index);
       if (resStatus) {
         successCount += 1;
-        overallProgress.value = Math.round(((resultIndex + 1) / resultsNotRef.length) * 100);
-        currentCount.value = resultIndex + 1
       }
+      currentCount.value = index + 1;
+      overallProgress.value = Math.round(((index + 1) / resultsNotRef.length) * 100);
     }
+    // 转换结果一次性赋值，避免逐文件触发响应式和表格重渲染
+    results.value = resultsNotRef;
     // 生成主文件
     if (successCount > 0) {
       const imagesForMaster = []
@@ -279,7 +299,6 @@ const startConversion = async () => {
       );
 
       if (success) {
-        results.value = resultsNotRef
         ElMessage.success(`转换完成！成功转换 ${successCount} 张图像`);
       } else {
         ElMessage.error(`生成总文件失败: ${error}`);
@@ -334,17 +353,19 @@ const startConversion = async () => {
         </el-col>
       </el-row>
       <el-row>
-        <el-col :span="8">
+        <el-col :span="10">
           <el-form-item label="颜色编码类型">
             <el-radio-group v-model="form.colorCodedType">
               <el-radio value="RGB565">RGB565</el-radio>
+              <el-radio value="RGB666">RGB666</el-radio>
               <el-radio value="RGB888">RGB888</el-radio>
             </el-radio-group>
           </el-form-item>
         </el-col>
-        <el-col :span="8">
+        <el-col :span="6">
           <el-form-item label="开启RLE编码">
-            <el-switch @change="val => results = []" :disabled="form.colorCodedType === 'RGB888'" v-model="form.isRLE" active-color="primary"/>
+            <el-switch @change="val => results = []" :disabled="form.colorCodedType === 'RGB888'" v-model="form.isRLE"
+                       active-color="primary"/>
           </el-form-item>
         </el-col>
         <el-col :span="8">
@@ -402,8 +423,9 @@ const startConversion = async () => {
       <el-col style="text-align: right;" :span="8">
         <el-text>{{ currentCount + '/' + totalCount }}</el-text>
       </el-col>
-      <el-col :offset="1" :span="7">
-
+      <el-col :offset="1" :span="7" style="display: flex; align-items: center;">
+        <el-progress style="width: 100%;" :percentage="overallProgress" :status="progressStatus ?? ''"
+                     :stroke-width="12"/>
       </el-col>
     </el-row>
 

@@ -201,6 +201,92 @@ const show = ref(false);
         </el-text>
       </el-space>
     </div>
+    <div v-else-if="activeIndex === '5'" style="margin-top: 0; max-height: 70vh; overflow-y: auto; padding-right: 5px;"
+         class="instructions">
+      <el-alert type="info" :closable="false" show-icon
+                title="界面布局调试用于在电脑上预览 MCU 屏幕的图片布局，并生成对应的 C 代码。一个工程可以包含多个界面，所有界面共用同一个图片资源目录。"/>
+      <el-divider content-position="left">1. 工程与界面</el-divider>
+      <ul>
+        <li><strong>图片资源目录</strong>：选择所有界面共用的图片文件夹。切换目录会提示是否开始一个新工程，原工程不会自动迁移到新目录。</li>
+        <li><strong>工程名称</strong>：仅用于工程标识和导出文件名，不影响生成的代码。</li>
+        <li><strong>界面下拉</strong>：切换当前编辑的界面。每个界面独立保存屏幕宽高、背景色和图片布局。</li>
+        <li><strong>新增 / 复制 / 重命名 / 删除</strong>：新增界面会继承当前界面的尺寸和背景；复制会同时复制当前界面的布局项；至少保留一个界面。</li>
+        <li><strong>C 标识</strong>：用于生成函数名和宏名，例如 <code>POWER</code> 会生成
+          <code>display_ui_layout_POWER()</code>。只建议使用字母、数字和下划线，工具会自动转大写、替换非法字符并去重。
+        </li>
+      </ul>
+
+      <el-divider content-position="left">2. 放置图片</el-divider>
+      <ul>
+        <li>在左侧图片列表中<strong>单击图片</strong>，会把图片添加到当前界面的预留屏幕中。</li>
+        <li>拖动图片调整位置；选中后可以用<strong>方向键</strong>微调，<strong>Ctrl + 方向键</strong>每次移动 5 像素。</li>
+        <li>图片拖动到屏幕水平/垂直中线附近时，会显示虚线辅助对齐。</li>
+        <li><strong>屏幕宽度 / 高度 / 背景</strong>：修改后点击“应用”；只影响当前界面。背景色只用于电脑预览，生成的代码不包含清屏颜色，实际背景由固件决定。</li>
+        <li><strong>同一张图片可以重复放置</strong>：多界面稀疏表会保留每一处位置，不再限制每个枚举只能有一个位置。</li>
+        <li>如果文件名生成的枚举名重复（例如 <code>a.png</code> 和 <code>a.jpg</code> 都会变成 <code>A</code>），生成代码前会阻止保存，请先修改文件名。</li>
+      </ul>
+
+      <el-divider content-position="left">3. 保存与加载工程</el-divider>
+      <ul>
+        <li>工程会自动保存到用户数据目录。拖动、添加图片、切换界面、修改尺寸/背景后，大约 800ms 自动保存一次。</li>
+        <li><strong>保存工程</strong>：立即保存当前工程。</li>
+        <li><strong>导出工程</strong>：生成 <code>.ui-project.json</code>，可提交到 Git 或备份。导出文件只包含资源目录、界面和枚举名/坐标，<strong>不包含图片本身</strong>，换电脑时仍需要对应的图片目录。</li>
+        <li><strong>导入工程</strong>：选择之前导出的 JSON，恢复所有界面、当前界面和资源目录；如果图片缺失会给出提示。</li>
+        <li>旧版布局历史会自动迁移成多个界面，原数据备份为 <code>ui-layout.json.v2.bak</code>。</li>
+      </ul>
+
+      <el-divider content-position="left">4. 生成代码</el-divider>
+      <ul>
+        <li><strong>枚举映射</strong>：所有界面共用一份，枚举值由文件名生成；替换同名图片不需要改固件代码。</li>
+        <li><strong>稀疏定位表</strong>：不再为每个界面生成 <code>image_positions[图片总数]</code> 全量数组。所有界面共用
+          <code>ui_layout_items[]</code>，只保存实际放置的图片，默认每项 4 字节：
+          <code>image(8bit) + x(12bit) + y(12bit)</code>。
+        </li>
+        <li><code>ui_screens[]</code>：每个界面只保存宽高、在稀疏表中的起始下标 <code>first</code> 和数量 <code>count</code>。</li>
+        <li><strong>按界面绘制</strong>：调用 <code>display_ui_screen(index)</code>；也可以调用生成的
+          <code>display_ui_layout_&lt;C标识&gt;()</code>。单界面还会保留无参的 <code>display_ui_layout()</code>。
+        </li>
+        <li><strong>显示图片函数签名</strong>：多界面版本改为
+          <code>display_image(ImageMapping image, unsigned short x, unsigned short y)</code>，需要把默认空实现替换成自己的显示逻辑。
+        </li>
+        <li>图片超过 256 张，或坐标超过 4095 时，会自动回退成结构体稀疏表（约 6 字节/项），代码仍然可用。</li>
+        <li><strong>坐标原点</strong>：屏幕左上角为 <code>(0, 0)</code>，<code>x/y</code> 是图片左上角坐标。</li>
+      </ul>
+
+      <p>生成代码的核心结构示例：</p>
+      <pre class="code-block"><code>#define UI_LAYOUT_ITEM_COUNT 14
+
+const uint32_t ui_layout_items[] = {
+    UI_LAYOUT_ITEM(IMG_01_006_1..., 154, 17),
+    UI_LAYOUT_ITEM(IMG_01_006_2..., 182, 17),
+};
+
+const UiScreen ui_screens[] = {
+    {480, 200, 0, 11},   /* 待处理图片 */
+    {480, 200, 11, 3},   /* 功率详情 */
+};
+
+void display_ui_screen(uint8_t index) {
+    const UiScreen *screen = &amp;ui_screens[index];
+    for (uint16_t i = 0; i &lt; screen-&gt;count; i++) {
+        uint32_t item = ui_layout_items[screen-&gt;first + i];
+        display_image(UI_LAYOUT_ITEM_IMAGE(item),
+                      UI_LAYOUT_ITEM_X(item),
+                      UI_LAYOUT_ITEM_Y(item));
+    }
+}</code></pre>
+
+      <el-divider content-position="left">5. 固件侧接入</el-divider>
+      <ul>
+        <li>实现 <code>display_image(image, x, y)</code>：根据枚举找到图片数据，把图片绘制到指定坐标。</li>
+        <li>根据当前页面调用 <code>display_ui_screen(0)</code>、<code>display_ui_screen(1)</code>，或调用生成的命名函数。</li>
+        <li>界面尺寸可以从 <code>ui_screens[index].width/height</code> 读取，用于清屏或计算居中位置。</li>
+        <li>图片数据本身仍使用“图片转数组”生成的数据，界面布局只负责枚举和坐标。</li>
+      </ul>
+
+      <el-alert type="warning" :closable="false" show-icon
+                title="升级提示：多界面版本把 display_image 改成了带 x/y 的签名；旧固件如果使用 display_image(ImageMapping) + image_positions[]，需要同步调整。"/>
+    </div>
   </el-dialog>
 </template>
 
@@ -227,5 +313,22 @@ const show = ref(false);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: monospace;
+}
+
+.instructions .code-block {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--el-fill-color-light);
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  overflow-x: auto;
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+.instructions .code-block code {
+  padding: 0;
+  background: none;
+  border-radius: 0;
 }
 </style>

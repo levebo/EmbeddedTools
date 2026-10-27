@@ -1,19 +1,30 @@
 /**
  * 串口工具类*/
+import {SendCustomScriptOptions} from "@/util/SerialUtil";
 
 const scriptErrMsg = '执行自定义脚本时出错: '
+// 脚本缓存
+const scriptCache = new Map<string, Function>();
+
 /**
  * 执行发送自定义脚本
  * @param sendData 数据
+ * @param options 参数
  * @param scriptCode 脚本代码
  */
-const execSendCustomScript = (sendData: Uint8Array, scriptCode: string): Uint8Array => {
+const execSendCustomScript = (sendData: Uint8Array, options: SendCustomScriptOptions, scriptCode: string): Uint8Array => {
     try {
-        // 创建一个新的函数，将响应数据作为参数传入
-        const fun = new Function('sendData', scriptCode);
-        return fun(sendData);
-    } catch (error) {
+        let fun = scriptCache.get(scriptCode);
+        if (!fun) {
+            // 创建一个新的函数，将响应数据作为参数传入
+            fun = new Function('sendData', 'options', scriptCode);
+            scriptCache.set(scriptCode, fun);
+        }
+        return fun(sendData, options);
+    } catch (error: any) {
         console.error(scriptErrMsg, error);
+        // 出错时清除可能有问题的缓存
+        scriptCache.delete(scriptCode);
         throw new Error(scriptErrMsg + error.message);
     }
 }
@@ -33,11 +44,17 @@ const execReceiveCustomScript = (sendData: Uint8Array, receiveData: Uint8Array, 
     receiveData: Uint8Array
 } => {
     try {
-        // 创建一个新的函数，将响应数据作为参数传入
-        const fun = new Function('sendData', 'receiveData', scriptCode);
+        let fun = scriptCache.get(scriptCode);
+        if (!fun) {
+            // 创建一个新的函数，将响应数据作为参数传入
+            fun = new Function('sendData', 'receiveData', scriptCode);
+            scriptCache.set(scriptCode, fun);
+        }
         return fun(sendData, receiveData);
-    } catch (error) {
+    } catch (error: any) {
         console.error(scriptErrMsg, error);
+        // 出错时清除可能有问题的缓存
+        scriptCache.delete(scriptCode);
         throw new Error(scriptErrMsg + error.message);
     }
 }

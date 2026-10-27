@@ -8,7 +8,7 @@ import Codemirror from "codemirror-editor-vue3";
 // placeholder
 import "codemirror/addon/display/placeholder.js";
 import {Editor, EditorConfiguration} from "codemirror";
-import {EpPropMergeType} from "element-plus/es/utils";
+import type {EpPropMergeType} from "element-plus/es/utils";
 
 /*串口工具发送文件配置弹窗*/
 defineOptions({name: 'SerialFileConfigWin'})
@@ -127,6 +127,19 @@ const handleClose = (done: () => void) => {
                     毫秒
                   </template>
                 </el-input>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row>
+            <el-col :span="24">
+              <el-form-item label="启用文件发送记录日志">
+                <el-switch v-model="fileOptions.isFileSendDataLog"/>
+                <el-tag style="margin-left: 10px;" type="info">
+                  <el-icon>
+                    <InfoFilled/>
+                  </el-icon>
+                  开启后可以串口记录查看文件的每一条串口数据，文件比较大时不推荐开启会导致界面卡顿和发送时间明显延长。
+                </el-tag>
               </el-form-item>
             </el-col>
           </el-row>
